@@ -1,5 +1,7 @@
 import pygame
 from collections import defaultdict
+import json
+import os
 
 cell_map = {
     0:  ["Empty",     (20, 18, 18)],
@@ -68,6 +70,51 @@ class Grid:
                 cell_scripts[(x, y)] = ""
 
         self._reset_sim_state()
+
+    def save(self, name):
+        data = {
+            "grid": {},
+            "scripts": {},
+        }
+        for pos, cell in self.grid.items():
+            key = f"{pos[0]},{pos[1]}"
+            data["grid"][key] = {
+                "type":  cell["type"],
+                "color": cell["color"],
+            }
+        for pos, script in cell_scripts.items():
+            if script.strip():
+                key = f"{pos[0]},{pos[1]}"
+                data["scripts"][key] = script
+        path = f"{name}.json"
+        with open(path, "w") as f:
+            json.dump(data, f)
+        print(f"saved to {path}")
+
+    def load(self, name):
+        path = f"{name}.json"
+        if not os.path.exists(path):
+            print(f"{path} not found")
+            return False
+        with open(path, "r") as f:
+            data = json.load(f)
+        for pos in self.grid:
+            self.grid[pos]["type"]  = cell_map[0][0]
+            self.grid[pos]["color"] = cell_map[0][1]
+            cell_scripts[pos]       = ""
+        for key, cell in data["grid"].items():
+            x, y = map(int, key.split(","))
+            if (x, y) in self.grid:
+                self.grid[(x, y)]["type"]  = cell["type"]
+                self.grid[(x, y)]["color"] = tuple(cell["color"])
+        for key, script in data["scripts"].items():
+            x, y = map(int, key.split(","))
+            if (x, y) in self.grid:
+                cell_scripts[(x, y)] = script
+        self._reset_sim_state()
+        self.draw_grid()
+        print(f"loaded {path}")
+        return True
 
     def _reset_sim_state(self):
         self.signal_graph   = defaultdict(list)

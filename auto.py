@@ -17,6 +17,7 @@ grid          = Grid(width, height)
 grid.draw_grid()
 clock         = pygame.Clock()
 font          = pygame.font.Font(None, 24)
+font_large    = pygame.font.Font(None, 32)
 
 running         = True
 open_editor     = False
@@ -28,6 +29,9 @@ equipped        = 1
 text_surface    = font.render("", True, (255, 255, 255))
 text_rect       = text_surface.get_rect()
 clicked_buttons = []
+
+file_mode   = None
+file_input  = ""
 
 while running:
     screen.fill((0, 0, 0))
@@ -46,8 +50,36 @@ while running:
             running = False
 
         elif event.type == pygame.KEYDOWN:
+
+            if file_mode:
+                if event.key == pygame.K_RETURN:
+                    if file_input.strip():
+                        if file_mode == "save":
+                            grid.save(file_input.strip())
+                        elif file_mode == "load":
+                            grid.load(file_input.strip())
+                    file_mode  = None
+                    file_input = ""
+                elif event.key == pygame.K_ESCAPE:
+                    file_mode  = None
+                    file_input = ""
+                elif event.key == pygame.K_BACKSPACE:
+                    file_input = file_input[:-1]
+                else:
+                    if event.unicode and event.unicode.isprintable():
+                        file_input += event.unicode
+                continue
+
             if event.key == pygame.K_ESCAPE:
                 running = False
+
+            elif event.key == pygame.K_s and not open_editor and not sim_running:
+                file_mode  = "save"
+                file_input = ""
+
+            elif event.key == pygame.K_l and not open_editor and not sim_running:
+                file_mode  = "load"
+                file_input = ""
 
             elif event.key == pygame.K_SPACE and not open_editor:
                 sim_running = not sim_running
@@ -92,7 +124,7 @@ while running:
                 text_rect    = text_surface.get_rect()
 
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            if not open_editor:
+            if not open_editor and not file_mode:
                 cx, cy = mp[0] // cell_size, mp[1] // cell_size
                 if event.button == 1:
                     t_name = grid.get_cell(cx, cy)[0]
@@ -104,8 +136,10 @@ while running:
                         if sw is not None:
                             sw["state"] = 1 if sw["state"] == 0 else 0
                     else:
+                        cell_scripts[(cx, cy)] = ""
                         grid.set_cell(cx, cy, equipped)
                 elif event.button == 3:
+                    cell_scripts[(cx, cy)] = ""
                     grid.set_cell(cx, cy, 0)
 
     if tick:
@@ -114,7 +148,20 @@ while running:
 
     grid.draw(screen)
 
-    if open_editor:
+    if file_mode:
+        overlay = pygame.Surface((width, height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        screen.blit(overlay, (0, 0))
+        box_w, box_h = 400, 100
+        bx = width  // 2 - box_w // 2
+        by = height // 2 - box_h // 2
+        pygame.draw.rect(screen, (60, 60, 60), (bx, by, box_w, box_h))
+        pygame.draw.rect(screen, (200, 200, 200), (bx, by, box_w, box_h), 1)
+        label = "save as:" if file_mode == "save" else "load file:"
+        screen.blit(font_large.render(label, True, (200, 200, 200)), (bx + 16, by + 12))
+        screen.blit(font_large.render(file_input + "|", True, (255, 255, 255)), (bx + 16, by + 52))
+
+    elif open_editor:
         pygame.draw.rect(screen, (60, 60, 60), (mx, my, 200, 200))
         pygame.draw.rect(screen, (200, 200, 200), (sx, sy, cell_size, cell_size), 2)
         screen.blit(text_surface, (mx + 8, my + 8), text_rect)
@@ -124,7 +171,8 @@ while running:
     status = (
         f"[SPACE] {'STOP' if sim_running else 'START'}  |  "
         f"equipped: [{equipped}] {cell_map[equipped][0]}  |  "
-        f"[</> arrows] select  |  [TAB] edit script"
+        f"[</> arrows] select  |  [TAB] edit script  |  "
+        f"[S] save  [L] load"
     )
     screen.blit(font.render(status, True, (200, 200, 200)), (8, height - 24))
 
