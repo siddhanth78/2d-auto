@@ -89,12 +89,10 @@ class Grid:
         path = f"{name}.json"
         with open(path, "w") as f:
             json.dump(data, f)
-        print(f"saved to {path}")
 
     def load(self, name):
         path = f"{name}.json"
         if not os.path.exists(path):
-            print(f"{path} not found")
             return False
         with open(path, "r") as f:
             data = json.load(f)
@@ -113,7 +111,6 @@ class Grid:
                 cell_scripts[(x, y)] = script
         self._reset_sim_state()
         self.draw_grid()
-        print(f"loaded {path}")
         return True
 
     def _reset_sim_state(self):
@@ -142,13 +139,27 @@ class Grid:
 
     def set_cell(self, x, y, cell_type):
         if (x, y) in self.grid:
-            self.grid[(x, y)]["type"]  = cell_map[cell_type][0]
-            self.grid[(x, y)]["color"] = cell_map[cell_type][1]
+            old_type = self.grid[(x, y)]["type"]
             new_type = cell_map[cell_type][0]
+
+            if old_type in SCRIPTABLE:
+                self.engine_data.pop((x, y), None)
+                self.switch_data.pop((x, y), None)
+                self.button_data.pop((x, y), None)
+                self.gate_data.pop((x, y), None)
+                self.sensor_data.pop((x, y), None)
+                self.destroyer_data.pop((x, y), None)
+                self.generator_data.pop((x, y), None)
+                for sig, entries in self.signal_graph.items():
+                    self.signal_graph[sig] = [e for e in entries if e[1] != (x, y)]
+
             if new_type not in SCRIPTABLE:
                 cell_scripts.pop((x, y), None)
             else:
                 cell_scripts[(x, y)] = ""
+
+            self.grid[(x, y)]["type"]  = new_type
+            self.grid[(x, y)]["color"] = cell_map[cell_type][1]
             self.draw_grid()
 
     def get_cell(self, x, y):
@@ -341,6 +352,16 @@ class Grid:
         for nx, ny in self.neighbors4(x, y):
             t = self.cell_type(nx, ny)
             if t != "Empty" and t != "Destroyer":
+                if t in SCRIPTABLE:
+                    self.engine_data.pop((nx, ny), None)
+                    self.switch_data.pop((nx, ny), None)
+                    self.button_data.pop((nx, ny), None)
+                    self.gate_data.pop((nx, ny), None)
+                    self.sensor_data.pop((nx, ny), None)
+                    self.destroyer_data.pop((nx, ny), None)
+                    self.generator_data.pop((nx, ny), None)
+                    for sig in list(self.signal_graph.keys()):
+                        self.signal_graph[sig] = [e for e in self.signal_graph[sig] if e[1] != (nx, ny)]
                 self.grid[(nx, ny)]["type"]  = cell_map[0][0]
                 self.grid[(nx, ny)]["color"] = cell_map[0][1]
                 cell_scripts[(nx, ny)]       = ""
@@ -356,8 +377,20 @@ class Grid:
         if self.in_bounds(tx, ty) and self.is_empty(tx, ty):
             block_id = TYPE_NAME_TO_ID.get(gd["block"], 1)
             new_type = cell_map[block_id][0]
+
+            self.engine_data.pop((tx, ty), None)
+            self.switch_data.pop((tx, ty), None)
+            self.button_data.pop((tx, ty), None)
+            self.gate_data.pop((tx, ty), None)
+            self.sensor_data.pop((tx, ty), None)
+            self.destroyer_data.pop((tx, ty), None)
+            self.generator_data.pop((tx, ty), None)
+            for sig in list(self.signal_graph.keys()):
+                self.signal_graph[sig] = [e for e in self.signal_graph[sig] if e[1] != (tx, ty)]
+
             self.grid[(tx, ty)]["type"]  = new_type
             self.grid[(tx, ty)]["color"] = cell_map[block_id][1]
+
             if gd["blockscript"] and new_type in SCRIPTABLE:
                 script = gd["blockscript"]
                 cell_scripts[(tx, ty)] = script
@@ -408,6 +441,9 @@ class Grid:
                     self.destroyer_data[(tx, ty)] = {"inputs": inputs}
                     for sig in inputs:
                         self.signal_graph[sig].append(("destroyer", (tx, ty)))
+            else:
+                cell_scripts[(tx, ty)] = ""
+
             self.draw_grid()
 
     def emit(self, sig, value, visited):
@@ -564,7 +600,6 @@ class Grid:
             x, y   = pos
             nx, ny = x + dx, y + dy
             if not self.in_bounds(nx, ny):
-                print(f"out of bounds at {nx,ny}")
                 return False
             if (nx, ny) not in cluster_set and not self.is_empty(nx, ny):
                 return False
