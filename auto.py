@@ -148,6 +148,39 @@ while running:
 
     grid.draw(screen)
 
+    if sim_running:
+        for pos, sw in grid.switch_data.items():
+            x, y = pos
+            color = (0, 255, 0) if sw["state"] == 1 else (255, 0, 0)
+            pygame.draw.circle(screen, color, (x * cell_size + cell_size // 2, y * cell_size + cell_size // 2), 3)
+
+        for pos, sd in grid.sensor_data.items():
+            x, y  = pos
+            sig   = sd["outputs"][0] if sd["outputs"] else None
+            value = grid.signal_state.get(sig, 0) if sig else 0
+            color = (0, 255, 0) if value == 1 else (255, 0, 0)
+            pygame.draw.circle(screen, color, (x * cell_size + cell_size // 2, y * cell_size + cell_size // 2), 3)
+
+        for pos, gd in grid.gate_data.items():
+            x, y   = pos
+            sig    = gd["outputs"][0] if gd["outputs"] else None
+            value  = grid.signal_state.get(sig, 0) if sig else 0
+            color  = (0, 255, 0) if value == 1 else (255, 0, 0)
+            pygame.draw.circle(screen, color, (x * cell_size + cell_size // 2, y * cell_size + cell_size // 2), 3)
+
+        for pos, ed in grid.engine_data.items():
+            x, y   = pos
+            active = any(grid.signal_state.get(sig, 0) == 1 for sig in ed["inputs"])
+            color  = (0, 255, 0) if active else (255, 0, 0)
+            pygame.draw.circle(screen, color, (x * cell_size + cell_size // 2, y * cell_size + cell_size // 2), 3)
+
+        for pos, bd in grid.button_data.items():
+            x, y  = pos
+            sig   = bd["outputs"][0] if bd["outputs"] else None
+            value = grid.signal_state.get(sig, 0) if sig else 0
+            color = (0, 255, 0) if value == 1 else (255, 0, 0)
+            pygame.draw.circle(screen, color, (x * cell_size + cell_size // 2, y * cell_size + cell_size // 2), 3)
+
     if file_mode:
         overlay = pygame.Surface((width, height), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 160))
