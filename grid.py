@@ -367,6 +367,89 @@ class Grid:
                 cell_scripts[(nx, ny)]       = ""
         self.draw_grid()
 
+    def register_cell(self, x, y, type_name, script):
+        pos   = (x, y)
+        attrs = parse_script(script)
+
+        self.engine_data.pop(pos, None)
+        self.switch_data.pop(pos, None)
+        self.button_data.pop(pos, None)
+        self.gate_data.pop(pos, None)
+        self.sensor_data.pop(pos, None)
+        self.destroyer_data.pop(pos, None)
+        self.generator_data.pop(pos, None)
+        for sig in list(self.signal_graph.keys()):
+            self.signal_graph[sig] = [e for e in self.signal_graph[sig] if e[1] != pos]
+
+        if type_name == "Engine":
+            dir_name = attrs.get("dir", "right")
+            inputs   = split_sigs(attrs.get("input", ""))
+            speed    = max(1, min(int(attrs.get("speed", "1")), 4))
+            self.engine_data[pos] = {
+                "dir_name": dir_name,
+                "vec":      DIRS.get(dir_name, (1, 0)),
+                "inputs":   inputs,
+                "speed":    speed,
+            }
+            for sig in inputs:
+                self.signal_graph[sig].append(("engine", pos))
+
+        elif type_name == "Button":
+            outputs = split_sigs(attrs.get("output", ""))
+            self.button_data[pos] = {"outputs": outputs}
+
+        elif type_name == "Switch":
+            inputs  = split_sigs(attrs.get("input", ""))
+            outputs = split_sigs(attrs.get("output", ""))
+            self.switch_data[pos] = {
+                "inputs":  inputs,
+                "outputs": outputs,
+                "state":   0,
+                "last_in": 0,
+            }
+            for sig in inputs:
+                self.signal_graph[sig].append(("switch", pos))
+
+        elif type_name == "Sensor":
+            outputs    = split_sigs(attrs.get("output", ""))
+            block_attr = attrs.get("block", "").strip()
+            self.sensor_data[pos] = {
+                "outputs":    outputs,
+                "watch_type": block_attr if block_attr else None,
+            }
+
+        elif type_name in ("AND", "OR", "XOR", "NOT"):
+            inputs  = split_sigs(attrs.get("input", ""))
+            outputs = split_sigs(attrs.get("output", ""))
+            self.gate_data[pos] = {
+                "type":     type_name,
+                "inputs":   inputs,
+                "outputs":  outputs,
+                "received": set(),
+            }
+            for sig in inputs:
+                self.signal_graph[sig].append(("gate", pos))
+
+        elif type_name == "Destroyer":
+            inputs = split_sigs(attrs.get("input", ""))
+            self.destroyer_data[pos] = {"inputs": inputs}
+            for sig in inputs:
+                self.signal_graph[sig].append(("destroyer", pos))
+
+        elif type_name == "Generator":
+            inputs      = split_sigs(attrs.get("input", ""))
+            block_name  = attrs.get("block", "Block")
+            dir_name    = attrs.get("dir", "right")
+            blockscript = attrs.get("blockscript", "").replace("|", "\n")
+            self.generator_data[pos] = {
+                "inputs":      inputs,
+                "block":       block_name,
+                "dir_name":    dir_name,
+                "blockscript": blockscript,
+            }
+            for sig in inputs:
+                self.signal_graph[sig].append(("generator", pos))
+
     def _do_generate(self, pos):
         gd = self.generator_data.get(pos)
         if gd is None:
