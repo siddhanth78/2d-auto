@@ -55,11 +55,19 @@ editor_my           = 0
 editor_blink        = 0
 
 PANEL_W      = 340
-FIELD_COL_W  = 100
-VALUE_COL_W  = 160
-ED_ROW_H     = 26
 ED_PAD       = 10
 ED_HEADER_H  = 30
+ED_ROW_H     = 26
+BULB_SIZE    = 14   # px per bulb square
+BULB_GAP     = 2    # gap between bulbs
+
+# ratio-based editor width — 30% of screen, clamped
+ED_TOTAL_W   = max(280, min(int(width * 0.30), 480))
+FIELD_COL_W  = max(70, int(ED_TOTAL_W * 0.30))
+VALUE_COL_W  = ED_TOTAL_W - FIELD_COL_W - ED_PAD * 3
+CHAR_W       = 9
+MAX_CHARS    = max(8, (VALUE_COL_W - 8) // CHAR_W)
+ED_ROW_H2    = ED_ROW_H + 18  # 2-line text row height
 
 
 def snap_cell(pos):
@@ -80,6 +88,105 @@ def get_select_rect():
 def get_label(pos):
     return f"{pos[0]}_{pos[1]}"
 
+
+# ── bulb helpers ──────────────────────────────────────────────────────────────
+
+def bulbs_str_to_list(s):
+    """Parse bulbs string in any format — space-separated or bracketed rows."""
+    import re
+    vals = re.findall(r'[01]', s)
+    return [int(v) for v in vals]
+
+
+def bulbs_list_to_str(lst):
+    return " ".join(str(v) for v in lst)
+
+
+def get_bulb_dims(editor_values):
+    dim_str = editor_values.get("dim", "")
+    cols, rows = parse_dim(dim_str)
+    return max(1, min(cols, 32)), max(1, min(rows, 32))
+
+
+
+
+
+
+
+
+
+
+
+
+def resize_bulbs(old_list, old_cols, old_rows, new_cols, new_rows):
+    """Resize bulb list preserving existing values, trimming or zero-padding."""
+    new_list = []
+    for r in range(new_rows):
+        for c in range(new_cols):
+            old_idx = r * old_cols + c
+            if r < old_rows and c < old_cols and old_idx < len(old_list):
+                new_list.append(old_list[old_idx])
+            else:
+                new_list.append(0)
+    return new_list
+
+
+def bulb_grid_height(cols, rows):
+    """Pixel height of the bulb grid widget — label row + grid rows + padding."""
+    return ED_ROW_H + ED_PAD + rows * (BULB_SIZE + BULB_GAP) + ED_PAD
+
+
+# ── wrap helpers ──────────────────────────────────────────────────────────────
+
+def wrap_value(val):
+    if not val:
+        return [""]
+    lines = []
+    while len(val) > MAX_CHARS:
+        lines.append(val[:MAX_CHARS])
+        val = val[MAX_CHARS:]
+    lines.append(val)
+    return lines
+
+
+def cursor_to_wrap(val, flat_col):
+    lines     = wrap_value(val)
+    remaining = flat_col
+    for i, line in enumerate(lines):
+        if remaining <= len(line):
+            return i, remaining
+        remaining -= len(line)
+    return len(lines) - 1, len(lines[-1])
+
+
+def wrap_to_cursor(val, wrap_idx, col_in_line):
+    lines = wrap_value(val)
+    flat  = 0
+    for i, line in enumerate(lines):
+        if i == wrap_idx:
+            flat += min(col_in_line, len(line))
+            break
+        flat += len(line)
+    return flat
+
+
+def field_row_height(field, val, editor_values):
+    if field == "bulbs":
+        cols, rows = get_bulb_dims(editor_values)
+        return bulb_grid_height(cols, rows)
+    lines = wrap_value(val)
+    return ED_ROW_H2 if len(lines) > 1 else ED_ROW_H
+
+
+def editor_total_h(fields, values):
+    h = ED_HEADER_H + ED_PAD
+    for f in fields:
+        h += field_row_height(f, values.get(f, ""), values)
+    h += ED_PAD + 20
+    return h
+
+
+# ── editor functions ──────────────────────────────────────────────────────────
 
 def get_editor_fields(type_name, existing_script):
     attrs = parse_script(existing_script) if existing_script.strip() else {}
@@ -108,8 +215,17 @@ def editor_to_script():
     lines = []
     for f in editor_fields:
         val = editor_values.get(f, "")
-        if f in ("dim", "bulbs"):
-            lines.append(f"{f} {val}" if val else f"{f}")
+        if f == "bulbs":
+            cols, rows  = get_bulb_dims(editor_values)
+            bulb_list   = bulbs_str_to_list(val)
+            total       = cols * rows
+            if len(bulb_list) < total:
+                bulb_list += [0] * (total - len(bulb_list))
+            else:
+                bulb_list = bulb_list[:total]
+            lines.append(f"bulbs {serialize_bulbs(bulb_list, cols)}")
+        elif f == "dim":
+            lines.append(f"dim {val}" if val else "dim 1x1")
         else:
             lines.append(f"{f}: {val}")
     return "\n".join(lines)
@@ -130,13 +246,12 @@ def open_editor_at(cx, cy, gx, gy):
     editor_cur_col      = len(vals.get(fields[0], "")) if fields else 0
     editor_blink        = 0
 
-    total_h  = ED_HEADER_H + ED_PAD + len(fields) * ED_ROW_H + ED_PAD + 20
-    ed_w     = FIELD_COL_W + VALUE_COL_W + ED_PAD * 3
+    total_h = editor_total_h(fields, vals)
 
     editor_mx = gx * cell_size + cell_size + 4
     editor_my = gy * cell_size
-    if editor_mx + ed_w > width:
-        editor_mx = gx * cell_size - ed_w - 4
+    if editor_mx + ED_TOTAL_W > width:
+        editor_mx = gx * cell_size - ED_TOTAL_W - 4
     if editor_my + total_h > height - 30:
         editor_my = height - 30 - total_h
 
@@ -162,6 +277,65 @@ def close_editor():
     editor_pos  = None
 
 
+def draw_bulb_field(surface, row_y, is_active, editor_values):
+    """Draw the bulb grid full-width inside the editor panel."""
+    cols, rows  = get_bulb_dims(editor_values)
+    bulb_list   = bulbs_str_to_list(editor_values.get("bulbs", ""))
+    total_bulbs = cols * rows
+    if len(bulb_list) < total_bulbs:
+        bulb_list += [0] * (total_bulbs - len(bulb_list))
+    else:
+        bulb_list = bulb_list[:total_bulbs]
+
+    gh  = bulb_grid_height(cols, rows)
+    fw  = ED_TOTAL_W - ED_PAD * 2          # full inner width
+    fx  = editor_mx + ED_PAD
+    fy  = row_y
+
+    bg  = (45, 45, 55) if is_active else (38, 38, 42)
+    bd  = (140, 140, 200) if is_active else (70, 70, 70)
+    pygame.draw.rect(surface, bg, (fx, fy, fw, gh - 2))
+    pygame.draw.rect(surface, bd, (fx, fy, fw, gh - 2), 1)
+
+    # "bulbs" label left, active highlight
+    lbl = font_label.render("bulbs", True, (220, 220, 220) if is_active else (160, 160, 160))
+    surface.blit(lbl, (fx + ED_PAD, fy + (ED_ROW_H - lbl.get_height()) // 2))
+
+    # grid starts below the label row
+    ox = fx + ED_PAD
+    oy = fy + ED_ROW_H + ED_PAD // 2
+    for r in range(rows):
+        for c in range(cols):
+            idx  = r * cols + c
+            bx   = ox + c * (BULB_SIZE + BULB_GAP)
+            by   = oy + r * (BULB_SIZE + BULB_GAP)
+            on   = bulb_list[idx] == 1
+            col  = (240, 220, 80) if on else (55, 55, 55)
+            bcol = (200, 180, 60) if on else (85, 85, 85)
+            pygame.draw.rect(surface, col,  (bx, by, BULB_SIZE, BULB_SIZE))
+            pygame.draw.rect(surface, bcol, (bx, by, BULB_SIZE, BULB_SIZE), 1)
+
+
+def handle_bulb_click(mx, my, row_top, editor_values):
+    """Toggle bulb at mouse pos. Returns updated bulbs string or None."""
+    cols, rows = get_bulb_dims(editor_values)
+    ox = editor_mx + ED_PAD + ED_PAD          # fx + ED_PAD
+    oy = row_top + ED_ROW_H + ED_PAD // 2
+    c  = (mx - ox) // (BULB_SIZE + BULB_GAP)
+    r  = (my - oy) // (BULB_SIZE + BULB_GAP)
+    if 0 <= c < cols and 0 <= r < rows:
+        bulb_list   = bulbs_str_to_list(editor_values.get("bulbs", ""))
+        total_bulbs = cols * rows
+        if len(bulb_list) < total_bulbs:
+            bulb_list += [0] * (total_bulbs - len(bulb_list))
+        else:
+            bulb_list = bulb_list[:total_bulbs]
+        idx              = r * cols + c
+        bulb_list[idx]   = 1 if bulb_list[idx] == 0 else 0
+        return bulbs_list_to_str(bulb_list)
+    return None
+
+
 def draw_editor(surface):
     global editor_blink
     editor_blink = (editor_blink + 1) % 60
@@ -172,47 +346,88 @@ def draw_editor(surface):
     type_name = grid.cell_type(editor_pos[0], editor_pos[1]) if editor_pos else ""
     lbl       = f"{type_name} [{get_label(editor_pos)}]" if editor_pos else ""
 
-    total_h = ED_HEADER_H + ED_PAD + len(editor_fields) * ED_ROW_H + ED_PAD + 20
-    ed_w    = FIELD_COL_W + VALUE_COL_W + ED_PAD * 3
+    total_h = editor_total_h(editor_fields, editor_values)
 
-    pygame.draw.rect(surface, (35, 35, 35), (editor_mx, editor_my, ed_w, total_h))
-    pygame.draw.rect(surface, (110, 110, 110), (editor_mx, editor_my, ed_w, total_h), 1)
+    pygame.draw.rect(surface, (35, 35, 35), (editor_mx, editor_my, ED_TOTAL_W, total_h))
+    pygame.draw.rect(surface, (110, 110, 110), (editor_mx, editor_my, ED_TOTAL_W, total_h), 1)
 
     header = font_label.render(lbl, True, (160, 160, 160))
     surface.blit(header, (editor_mx + ED_PAD, editor_my + 8))
     pygame.draw.line(surface, (60, 60, 60),
                      (editor_mx, editor_my + ED_HEADER_H),
-                     (editor_mx + ed_w, editor_my + ED_HEADER_H), 1)
+                     (editor_mx + ED_TOTAL_W, editor_my + ED_HEADER_H), 1)
+
+    row_y = editor_my + ED_HEADER_H + ED_PAD
 
     for i, field in enumerate(editor_fields):
-        row_y    = editor_my + ED_HEADER_H + ED_PAD + i * ED_ROW_H
         is_active = (i == editor_active_field)
-
-        label_surf = font_label.render(field, True, (160, 160, 160) if not is_active else (220, 220, 220))
-        surface.blit(label_surf, (editor_mx + ED_PAD, row_y + 5))
-
-        vx = editor_mx + ED_PAD + FIELD_COL_W
-        vy = row_y + 2
-        vw = VALUE_COL_W
-        vh = ED_ROW_H - 4
-
-        bg_col = (55, 55, 55) if is_active else (42, 42, 42)
-        bd_col = (140, 140, 200) if is_active else (70, 70, 70)
-        pygame.draw.rect(surface, bg_col, (vx, vy, vw, vh))
-        pygame.draw.rect(surface, bd_col, (vx, vy, vw, vh), 1)
-
         val       = editor_values.get(field, "")
-        val_surf  = font_editor.render(val, True, (230, 230, 230))
-        surface.blit(val_surf, (vx + 4, vy + 4))
+        rh        = field_row_height(field, val, editor_values)
 
-        if is_active and editor_blink < 30:
-            cur_x = vx + 4 + font_editor.size(val[:editor_cur_col])[0]
-            pygame.draw.line(surface, (230, 230, 230),
-                             (cur_x, vy + 3),
-                             (cur_x, vy + vh - 3), 1)
+        if field == "bulbs":
+            draw_bulb_field(surface, row_y, is_active, editor_values)
+        else:
+            label_surf = font_label.render(field, True,
+                                           (220, 220, 220) if is_active else (160, 160, 160))
+            surface.blit(label_surf, (editor_mx + ED_PAD,
+                                      row_y + (rh - label_surf.get_height()) // 2))
+
+            vx = editor_mx + ED_PAD + FIELD_COL_W
+            vy = row_y
+            vw = VALUE_COL_W
+            lines = wrap_value(val)
+            vh    = rh - 2
+
+            bg_col = (55, 55, 55) if is_active else (42, 42, 42)
+            bd_col = (140, 140, 200) if is_active else (70, 70, 70)
+            pygame.draw.rect(surface, bg_col, (vx, vy, vw, vh))
+            pygame.draw.rect(surface, bd_col, (vx, vy, vw, vh), 1)
+
+            clip_rect = pygame.Rect(vx + 1, vy + 1, vw - 2, vh - 2)
+            old_clip  = surface.get_clip()
+            surface.set_clip(clip_rect)
+
+            if len(lines) == 1:
+                txt_surf = font_editor.render(lines[0], True, (230, 230, 230))
+                surface.blit(txt_surf, (vx + 4, vy + 5))
+                if is_active and editor_blink < 30:
+                    cur_x = vx + 4 + font_editor.size(lines[0][:editor_cur_col])[0]
+                    pygame.draw.line(surface, (230, 230, 230),
+                                     (cur_x, vy + 3), (cur_x, vy + vh - 3), 1)
+            else:
+                wi, wc = cursor_to_wrap(val, editor_cur_col)
+                if wi == 0:
+                    view_start = 0
+                elif wi >= len(lines) - 1:
+                    view_start = max(0, len(lines) - 2)
+                else:
+                    view_start = wi - 1
+                view_start = min(view_start, max(0, len(lines) - 2))
+
+                line_h = ED_ROW_H - 6
+                for draw_i, li in enumerate(range(view_start, view_start + 2)):
+                    if li >= len(lines):
+                        break
+                    ly       = vy + 3 + draw_i * line_h
+                    txt_surf = font_editor.render(lines[li], True, (230, 230, 230))
+                    surface.blit(txt_surf, (vx + 4, ly))
+                    if is_active and editor_blink < 30 and li == wi:
+                        cx_px = vx + 4 + font_editor.size(lines[li][:wc])[0]
+                        pygame.draw.line(surface, (230, 230, 230),
+                                         (cx_px, ly + 1), (cx_px, ly + line_h - 2), 1)
+
+                surface.set_clip(old_clip)
+                if view_start > 0:
+                    pygame.draw.circle(surface, (120, 120, 180), (vx + vw - 6, vy + 5), 2)
+                if view_start + 2 < len(lines):
+                    pygame.draw.circle(surface, (120, 120, 180), (vx + vw - 6, vy + vh - 5), 2)
+
+            surface.set_clip(old_clip)
+
+        row_y += rh
 
     hint_y = editor_my + total_h - 18
-    surface.blit(font.render("TAB next field   ESC close", True, (70, 70, 70)),
+    surface.blit(font.render("TAB / ESC  close", True, (70, 70, 70)),
                  (editor_mx + ED_PAD, hint_y))
 
     hx = editor_pos[0] * cell_size
@@ -221,68 +436,114 @@ def draw_editor(surface):
 
 
 def editor_handle_key(event):
-    global editor_active_field, editor_cur_col, editor_values, open_editor
+    global editor_active_field, editor_cur_col, editor_values
 
     if not editor_fields:
-        return
-
-    if event.key == pygame.K_TAB:
-        editor_active_field = (editor_active_field + 1) % len(editor_fields)
-        field               = editor_fields[editor_active_field]
-        editor_cur_col      = len(editor_values.get(field, ""))
-        return
-
-    if event.key == pygame.K_ESCAPE:
-        close_editor()
-        return
-
-    if event.key == pygame.K_UP:
-        editor_active_field = max(0, editor_active_field - 1)
-        field               = editor_fields[editor_active_field]
-        editor_cur_col      = len(editor_values.get(field, ""))
-        return
-
-    if event.key == pygame.K_DOWN:
-        editor_active_field = min(len(editor_fields) - 1, editor_active_field + 1)
-        field               = editor_fields[editor_active_field]
-        editor_cur_col      = len(editor_values.get(field, ""))
         return
 
     field = editor_fields[editor_active_field]
     val   = editor_values.get(field, "")
 
+    # bulbs field is mouse-only, keys just navigate fields
+    if field == "bulbs":
+        if event.key in (pygame.K_TAB, pygame.K_ESCAPE):
+            close_editor()
+        elif event.key == pygame.K_UP:
+            editor_active_field = max(0, editor_active_field - 1)
+            f = editor_fields[editor_active_field]
+            editor_cur_col = len(editor_values.get(f, ""))
+        elif event.key == pygame.K_DOWN:
+            editor_active_field = min(len(editor_fields) - 1, editor_active_field + 1)
+            f = editor_fields[editor_active_field]
+            editor_cur_col = len(editor_values.get(f, ""))
+        return
+
+    if event.key in (pygame.K_TAB, pygame.K_ESCAPE):
+        close_editor()
+        return
+
+    if event.key == pygame.K_UP:
+        wi, wc = cursor_to_wrap(val, editor_cur_col)
+        if wi > 0:
+            editor_cur_col = wrap_to_cursor(val, wi - 1, wc)
+        else:
+            editor_active_field = max(0, editor_active_field - 1)
+            f = editor_fields[editor_active_field]
+            editor_cur_col = len(editor_values.get(f, ""))
+        return
+
+    if event.key == pygame.K_DOWN:
+        lines  = wrap_value(val)
+        wi, wc = cursor_to_wrap(val, editor_cur_col)
+        if wi < len(lines) - 1:
+            editor_cur_col = wrap_to_cursor(val, wi + 1, wc)
+        else:
+            editor_active_field = min(len(editor_fields) - 1, editor_active_field + 1)
+            f = editor_fields[editor_active_field]
+            editor_cur_col = len(editor_values.get(f, ""))
+        return
+
     if event.key == pygame.K_LEFT:
         editor_cur_col = max(0, editor_cur_col - 1)
+        return
 
-    elif event.key == pygame.K_RIGHT:
+    if event.key == pygame.K_RIGHT:
         editor_cur_col = min(len(val), editor_cur_col + 1)
+        return
 
-    elif event.key == pygame.K_HOME:
-        editor_cur_col = 0
+    if event.key == pygame.K_HOME:
+        wi, _          = cursor_to_wrap(val, editor_cur_col)
+        editor_cur_col = wrap_to_cursor(val, wi, 0)
+        return
 
-    elif event.key == pygame.K_END:
-        editor_cur_col = len(val)
+    if event.key == pygame.K_END:
+        wi, _          = cursor_to_wrap(val, editor_cur_col)
+        lines          = wrap_value(val)
+        editor_cur_col = wrap_to_cursor(val, wi, len(lines[wi]))
+        return
 
-    elif event.key == pygame.K_BACKSPACE:
+    if event.key == pygame.K_BACKSPACE:
         if editor_cur_col > 0:
-            val                       = val[:editor_cur_col - 1] + val[editor_cur_col:]
-            editor_values[field]      = val
-            editor_cur_col           -= 1
+            # when dim changes, resize bulbs to preserve values
+            old_val = val
+            val     = val[:editor_cur_col - 1] + val[editor_cur_col:]
+            editor_values[field] = val
+            editor_cur_col -= 1
+            if field == "dim":
+                _sync_bulbs_to_dim(old_val, val)
 
     elif event.key == pygame.K_DELETE:
         if editor_cur_col < len(val):
-            val                  = val[:editor_cur_col] + val[editor_cur_col + 1:]
+            old_val = val
+            val     = val[:editor_cur_col] + val[editor_cur_col + 1:]
             editor_values[field] = val
+            if field == "dim":
+                _sync_bulbs_to_dim(old_val, val)
 
     elif event.key == pygame.K_SPACE:
-        val                  = val[:editor_cur_col] + " " + val[editor_cur_col:]
+        old_val = val
+        val     = val[:editor_cur_col] + " " + val[editor_cur_col:]
         editor_values[field] = val
         editor_cur_col      += 1
+        if field == "dim":
+            _sync_bulbs_to_dim(old_val, val)
 
     elif event.unicode and event.unicode.isprintable() and event.key not in (pygame.K_TAB, pygame.K_ESCAPE):
-        val                  = val[:editor_cur_col] + event.unicode + val[editor_cur_col:]
+        old_val = val
+        val     = val[:editor_cur_col] + event.unicode + val[editor_cur_col:]
         editor_values[field] = val
         editor_cur_col      += 1
+        if field == "dim":
+            _sync_bulbs_to_dim(old_val, val)
+
+
+def _sync_bulbs_to_dim(old_dim_str, new_dim_str):
+    """Resize bulbs list when dim field changes."""
+    old_cols, old_rows = parse_dim(old_dim_str)
+    new_cols, new_rows = parse_dim(new_dim_str)
+    old_list = bulbs_str_to_list(editor_values.get("bulbs", ""))
+    new_list = resize_bulbs(old_list, old_cols, old_rows, new_cols, new_rows)
+    editor_values["bulbs"] = bulbs_list_to_str(new_list)
 
 
 def get_cell_state(pos, type_):
@@ -600,19 +861,25 @@ while running:
 
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if open_editor:
-                ed_w    = FIELD_COL_W + VALUE_COL_W + ED_PAD * 3
-                total_h = ED_HEADER_H + ED_PAD + len(editor_fields) * ED_ROW_H + ED_PAD + 20
+                total_h    = editor_total_h(editor_fields, editor_values)
                 mx_m, my_m = pygame.mouse.get_pos()
-                if not (editor_mx <= mx_m <= editor_mx + ed_w and editor_my <= my_m <= editor_my + total_h):
+                if not (editor_mx <= mx_m <= editor_mx + ED_TOTAL_W and
+                        editor_my <= my_m <= editor_my + total_h):
                     close_editor()
                 else:
-                    rel_y = my_m - (editor_my + ED_HEADER_H + ED_PAD)
-                    if rel_y >= 0:
-                        clicked_row = rel_y // ED_ROW_H
-                        if 0 <= clicked_row < len(editor_fields):
-                            editor_active_field = clicked_row
-                            field               = editor_fields[editor_active_field]
-                            editor_cur_col      = len(editor_values.get(field, ""))
+                    row_y = editor_my + ED_HEADER_H + ED_PAD
+                    for idx, f in enumerate(editor_fields):
+                        rh = field_row_height(f, editor_values.get(f, ""), editor_values)
+                        if row_y <= my_m <= row_y + rh:
+                            editor_active_field = idx
+                            if f == "bulbs" and event.button == 1:
+                                result = handle_bulb_click(mx_m, my_m, row_y, editor_values)
+                                if result is not None:
+                                    editor_values["bulbs"] = result
+                            else:
+                                editor_cur_col = len(editor_values.get(f, ""))
+                            break
+                        row_y += rh
                 continue
 
             if not file_mode:
