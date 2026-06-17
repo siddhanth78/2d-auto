@@ -31,6 +31,7 @@ equipped        = 1
 clicked_buttons = []
 file_mode       = None
 file_input      = ""
+get_states      = False
 
 select_mode    = False
 copy_mode      = False
@@ -823,6 +824,9 @@ while running:
                 copy_mode   = False
                 select_mode = False
 
+            elif event.key == pygame.K_t and sim_running:
+                get_states = not get_states
+
             elif event.key == pygame.K_BACKSPACE and select_mode and selected_cells:
                 do_delete_selected()
                 selected_cells = set()
@@ -976,7 +980,7 @@ while running:
 
     grid.draw(screen, sim_running)
 
-    if sim_running:
+    if sim_running and get_states:
         for pos, sw in grid.switch_data.items():
             x, y  = pos
             color = (0, 220, 0) if sw["state"] == 1 else (180, 60, 60)
@@ -1103,7 +1107,7 @@ while running:
         status = (
             f"[SPACE] {'STOP' if sim_running else 'START'}  |  "
             f"equipped: [{equipped}] {cell_map[equipped][0]}  |  "
-            f"[</> arrows] select  |  [TAB] script  |  "
+            f"[</> arrows] select  |  [TAB] script  |  [T] toggle state view in sim  |  "
             f"[X] select  [C] copy  [V] paste  |  [S] save  [L] load  |  [P] panel"
         )
         screen.blit(font_ui.render(status, True, (200, 200, 200)), (8, height - 24))
