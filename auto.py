@@ -562,7 +562,7 @@ while running:
                 copy_mode   = False
                 select_mode = False
 
-            elif event.key == pygame.K_DELETE and select_mode and selected_cells:
+            elif event.key == pygame.K_BACKSPACE and select_mode and selected_cells:
                 do_delete_selected()
                 selected_cells = set()
                 select_mode    = False
